@@ -15,6 +15,7 @@
 		325917371FAAF54000696C85 /* main.m in Sources */ = {isa = PBXBuildFile; fileRef = 325917361FAAF54000696C85 /* main.m */; };
 		325917411FAAF54000696C85 /* LJCacheTests.m in Sources */ = {isa = PBXBuildFile; fileRef = 325917401FAAF54000696C85 /* LJCacheTests.m */; };
 		3259174C1FAAF54000696C85 /* LJCacheUITests.m in Sources */ = {isa = PBXBuildFile; fileRef = 3259174B1FAAF54000696C85 /* LJCacheUITests.m */; };
+		3259175C1FAAF5E300696C85 /* LJMemoryCache.m in Sources */ = {isa = PBXBuildFile; fileRef = 3259175B1FAAF5E300696C85 /* LJMemoryCache.m */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -51,6 +52,8 @@
 		325917471FAAF54000696C85 /* LJCacheUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = LJCacheUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		3259174B1FAAF54000696C85 /* LJCacheUITests.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = LJCacheUITests.m; sourceTree = "<group>"; };
 		3259174D1FAAF54000696C85 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		3259175A1FAAF5E300696C85 /* LJMemoryCache.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = LJMemoryCache.h; sourceTree = "<group>"; };
+		3259175B1FAAF5E300696C85 /* LJMemoryCache.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = LJMemoryCache.m; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -81,6 +84,7 @@
 		3259171B1FAAF54000696C85 = {
 			isa = PBXGroup;
 			children = (
+				325917591FAAF55100696C85 /* Cache */,
 				325917261FAAF54000696C85 /* LJCache */,
 				3259173F1FAAF54000696C85 /* LJCacheTests */,
 				3259174A1FAAF54000696C85 /* LJCacheUITests */,
@@ -130,6 +134,15 @@
 				3259174D1FAAF54000696C85 /* Info.plist */,
 			);
 			path = LJCacheUITests;
+			sourceTree = "<group>";
+		};
+		325917591FAAF55100696C85 /* Cache */ = {
+			isa = PBXGroup;
+			children = (
+				3259175A1FAAF5E300696C85 /* LJMemoryCache.h */,
+				3259175B1FAAF5E300696C85 /* LJMemoryCache.m */,
+			);
+			path = Cache;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -266,6 +279,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				3259172C1FAAF54000696C85 /* ViewController.m in Sources */,
+				3259175C1FAAF5E300696C85 /* LJMemoryCache.m in Sources */,
 				325917371FAAF54000696C85 /* main.m in Sources */,
 				325917291FAAF54000696C85 /* AppDelegate.m in Sources */,
 			);
@@ -431,7 +445,9 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = VUWG3825HR;
 				INFOPLIST_FILE = LJCache/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 9.0;
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks";
 				PRODUCT_BUNDLE_IDENTIFIER = kk.LJCache;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -444,7 +460,9 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = VUWG3825HR;
 				INFOPLIST_FILE = LJCache/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 9.0;
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks";
 				PRODUCT_BUNDLE_IDENTIFIER = kk.LJCache;
 				PRODUCT_NAME = "$(TARGET_NAME)";
