@@ -16,6 +16,8 @@
 		325917411FAAF54000696C85 /* LJCacheTests.m in Sources */ = {isa = PBXBuildFile; fileRef = 325917401FAAF54000696C85 /* LJCacheTests.m */; };
 		3259174C1FAAF54000696C85 /* LJCacheUITests.m in Sources */ = {isa = PBXBuildFile; fileRef = 3259174B1FAAF54000696C85 /* LJCacheUITests.m */; };
 		3259175C1FAAF5E300696C85 /* LJMemoryCache.m in Sources */ = {isa = PBXBuildFile; fileRef = 3259175B1FAAF5E300696C85 /* LJMemoryCache.m */; };
+		3259175F1FAC56F400696C85 /* LJDiskCache.m in Sources */ = {isa = PBXBuildFile; fileRef = 3259175E1FAC56F400696C85 /* LJDiskCache.m */; };
+		325917621FAC71CE00696C85 /* LJKVStorage.m in Sources */ = {isa = PBXBuildFile; fileRef = 325917611FAC71CE00696C85 /* LJKVStorage.m */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -54,6 +56,10 @@
 		3259174D1FAAF54000696C85 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		3259175A1FAAF5E300696C85 /* LJMemoryCache.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = LJMemoryCache.h; sourceTree = "<group>"; };
 		3259175B1FAAF5E300696C85 /* LJMemoryCache.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = LJMemoryCache.m; sourceTree = "<group>"; };
+		3259175D1FAC56F400696C85 /* LJDiskCache.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = LJDiskCache.h; sourceTree = "<group>"; };
+		3259175E1FAC56F400696C85 /* LJDiskCache.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = LJDiskCache.m; sourceTree = "<group>"; };
+		325917601FAC71CE00696C85 /* LJKVStorage.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = LJKVStorage.h; sourceTree = "<group>"; };
+		325917611FAC71CE00696C85 /* LJKVStorage.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = LJKVStorage.m; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -141,6 +147,10 @@
 			children = (
 				3259175A1FAAF5E300696C85 /* LJMemoryCache.h */,
 				3259175B1FAAF5E300696C85 /* LJMemoryCache.m */,
+				3259175D1FAC56F400696C85 /* LJDiskCache.h */,
+				3259175E1FAC56F400696C85 /* LJDiskCache.m */,
+				325917601FAC71CE00696C85 /* LJKVStorage.h */,
+				325917611FAC71CE00696C85 /* LJKVStorage.m */,
 			);
 			path = Cache;
 			sourceTree = "<group>";
@@ -278,9 +288,11 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				3259175F1FAC56F400696C85 /* LJDiskCache.m in Sources */,
 				3259172C1FAAF54000696C85 /* ViewController.m in Sources */,
 				3259175C1FAAF5E300696C85 /* LJMemoryCache.m in Sources */,
 				325917371FAAF54000696C85 /* main.m in Sources */,
+				325917621FAC71CE00696C85 /* LJKVStorage.m in Sources */,
 				325917291FAAF54000696C85 /* AppDelegate.m in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
