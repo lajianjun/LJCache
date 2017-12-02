@@ -41,6 +41,16 @@ static NSString *const kTrashDirectoryName = @"trash";
     NSUInteger _dbOpenErrorCount;
 }
 
+#pragma mark - private
+
+- (void)_reset {
+    [[NSFileManager defaultManager] removeItemAtPath:[_path stringByAppendingPathComponent:kDBFileName] error:nil];
+    [[NSFileManager defaultManager] removeItemAtPath:[_path stringByAppendingPathComponent:kDBShmFileName] error:nil];
+    [[NSFileManager defaultManager] removeItemAtPath:[_path stringByAppendingPathComponent:kDBWalFileName] error:nil];
+    [self _fileMoveAllToTrash];
+    [self _fileEmptyTrashInBackground];
+}
+
 #pragma mark - public
 
 - (instancetype)init {
@@ -67,9 +77,25 @@ static NSString *const kTrashDirectoryName = @"trash";
     _dbPath = [path stringByAppendingPathComponent:kDBFileName];
     _errorLogsEnabled = YES;
     NSError *error = nil;
-    
+    if (![[NSFileManager defaultManager] createDirectoryAtPath:path
+                                   withIntermediateDirectories:YES
+                                                    attributes:nil
+                                                         error:&error] ||
+        ![[NSFileManager defaultManager] createDirectoryAtPath:[path stringByAppendingPathComponent:kDataDirectoryName]
+                                   withIntermediateDirectories:YES
+                                                    attributes:nil
+                                                         error:&error] ||
+        ![[NSFileManager defaultManager] createDirectoryAtPath:[path stringByAppendingPathComponent:kTrashDirectoryName]
+                                   withIntermediateDirectories:YES
+                                                    attributes:nil
+                                                         error:&error]) {
+            NSLog(@"LJKVStorage init error:%@",error);
+            return nil;
+    }
     if (![self _dbOpen] || ![self _dbInitialize]) {
+        
         [self _dbClose];
+        [self _reset];
         
         if (![self _dbOpen] || ![self _dbInitialize]) {
             [self _dbClose];
@@ -77,12 +103,17 @@ static NSString *const kTrashDirectoryName = @"trash";
             return nil;
         }
     }
-    
+    [self _fileEmptyTrashInBackground]; // empty the trash if failed at last time
     return self;
 }
 
 - (void)dealloc{
-    
+    UIBackgroundTaskIdentifier taskID = [[UIApplication sharedApplication] beginBackgroundTaskWithExpirationHandler:^{}];
+    [self _dbClose];
+    if (taskID != UIBackgroundTaskInvalid) {
+        [[UIApplication sharedApplication] endBackgroundTask:taskID];
+        taskID = UIBackgroundTaskInvalid;
+    }
 }
 
 - (BOOL)saveItem:(LJKVStorageItem *)item {
@@ -93,35 +124,53 @@ static NSString *const kTrashDirectoryName = @"trash";
     return [self saveItemWithKey:key value:value filename:nil extendedData:nil];
 }
 
+/**
+ *         filename     != null
+ *                          则用文件缓存value，并把`key`,`filename`,`extendedData`写入数据库
+ *         filename     == null
+ *                          缓存方式type：YYKVStorageTypeFile 不进行缓存
+ *                          缓存方式type：YYKVStorageTypeSQLite || YYKVStorageTypeMixed 数据库缓存
+ */
 - (BOOL)saveItemWithKey:(NSString *)key value:(NSData *)value filename:(NSString *)filename extendedData:(NSData *)extendedData {
-    if (key.length == 0 || key.length == 0) return NO;
+    if (key.length == 0 || value.length == 0) return NO;
     if (_type == LJKVStorageTypeFile && filename.length == 0) return NO;
     
     if (filename.length) {
+        if (![self _fileWriteWithName:filename data:value]) {
+            return NO;
+        }
         if (![self _dbSaveWithKey:key value:value fileName:filename extendedData:extendedData]) {
-            //todo  file save
+            [self _fileDeleteWithName:filename];
             return NO;
         }
         return YES;
     }else{
         if (_type != LJKVStorageTypeSQLite) {
             // because filename is null , so delete file for key
+            NSString *filename = [self _dbGetFilenameWithKey:key];
+            if (filename) {
+                [self _fileDeleteWithName:filename];
+            }
         }
         return [self _dbSaveWithKey:key value:value fileName:filename extendedData:extendedData];
     }
 }
 
+#pragma mark - public remove
 - (BOOL)removeItemForKey:(NSString *)key {
     if (key.length == 0) return NO;
     switch (_type) {
-        case LJKVStorageTypeSQLite:
+        case LJKVStorageTypeSQLite:{
             return [self _dbDeleteItemWithKey:key];
-            break;
+        }   break;
         case LJKVStorageTypeFile:
-        case LJKVStorageTypeMixed:
-            
+        case LJKVStorageTypeMixed:{
+            NSString *filename = [self _dbGetFilenameWithKey:key];
+            if (filename) {
+                [self _fileDeleteWithName:filename];
+            }
             return [self _dbDeleteItemWithKey:key];
-            break;
+        }   break;
         default:
             return NO;
             break;
@@ -131,19 +180,286 @@ static NSString *const kTrashDirectoryName = @"trash";
 - (BOOL)removeItemForKeys:(NSArray<NSString *> *)keys{
     if (keys.count == 0) return NO;
     switch (_type) {
-        case LJKVStorageTypeSQLite:
+        case LJKVStorageTypeSQLite:{
             return [self _dbDeleteItemWithKeys:keys];
-            break;
+        }   break;
         case LJKVStorageTypeFile:
-        case LJKVStorageTypeMixed:
-            
+        case LJKVStorageTypeMixed:{
+            NSArray *filenames = [self _dbGetFilenameWithKeys:keys];
+            for (NSString *filename in filenames) {
+                [self _fileDeleteWithName:filename];
+            }
             return [self _dbDeleteItemWithKeys:keys];
-            break;
+        }   break;
         default:
             return NO;
             break;
     }
 }
+
+- (BOOL)removeItemsLargerThanSize:(int)size {
+    if (size == INT_MAX) return YES;
+    if (size <= 0) return [self removeAllItems];
+    
+    switch (_type) {
+        case LJKVStorageTypeSQLite: {
+            if ([self _dbDeleteItemsWithSizeLargerThan:size]) {
+                [self _dbCheckpoint];
+                return YES;
+            }
+        } break;
+        case LJKVStorageTypeFile:
+        case LJKVStorageTypeMixed: {
+            NSArray *filenames = [self _dbGetFilenamesWithSizeLargerThan:size];
+            for (NSString *name in filenames) {
+                [self _fileDeleteWithName:name];
+            }
+            if ([self _dbDeleteItemsWithSizeLargerThan:size]) {
+                [self _dbCheckpoint];
+                return YES;
+            }
+        } break;
+    }
+    return NO;
+}
+
+- (BOOL)removeItemsEarlierThanTime:(int)time {
+    if (time <= 0) return YES;
+    if (time == INT_MAX) return [self removeAllItems];
+    
+    switch (_type) {
+        case LJKVStorageTypeSQLite: {
+            if ([self _dbDeleteItemsWithTimeEarlierThan:time]) {
+                [self _dbCheckpoint];
+                return YES;
+            }
+        } break;
+        case LJKVStorageTypeFile:
+        case LJKVStorageTypeMixed: {
+            NSArray *filenames = [self _dbGetFilenamesWithTimeEarlierThan:time];
+            for (NSString *name in filenames) {
+                [self _fileDeleteWithName:name];
+            }
+            if ([self _dbDeleteItemsWithTimeEarlierThan:time]) {
+                [self _dbCheckpoint];
+                return YES;
+            }
+        } break;
+    }
+    return NO;
+}
+
+- (BOOL)removeItemsToFitSize:(int)maxSize {
+    if (maxSize == INT_MAX) return YES;
+    if (maxSize <= 0) return [self removeAllItems];
+    
+    int total = [self _dbGetTotalItemSize];
+    if (total < 0) return NO;
+    if (total <= maxSize) return YES;
+    
+    NSArray *items = nil;
+    BOOL suc = NO;
+    do {
+        int perCount = 16;
+        items = [self _dbGetItemSizeInfoOrderByTimeAscWithLimit:perCount];
+        for (LJKVStorageItem *item in items) {
+            if (total > maxSize) {
+                if (item.filename) {
+                    [self _fileDeleteWithName:item.filename];
+                }
+                suc = [self _dbDeleteItemWithKey:item.key];
+                total -= item.size;
+            } else {
+                break;
+            }
+            if (!suc) break;
+        }
+    } while (total > maxSize && items.count > 0 && suc);
+    if (suc) [self _dbCheckpoint];
+    return suc;
+}
+
+- (BOOL)removeItemsToFitCount:(int)maxCount {
+    if (maxCount == INT_MAX) return YES;
+    if (maxCount <= 0) return [self removeAllItems];
+    
+    int total = [self _dbGetTotalItemCount];
+    if (total < 0) return NO;
+    if (total <= maxCount) return YES;
+    
+    NSArray *items = nil;
+    BOOL suc = NO;
+    do {
+        int perCount = 16;
+        items = [self _dbGetItemSizeInfoOrderByTimeAscWithLimit:perCount];
+        for (LJKVStorageItem *item in items) {
+            if (total > maxCount) {
+                if (item.filename) {
+                    [self _fileDeleteWithName:item.filename];
+                }
+                suc = [self _dbDeleteItemWithKey:item.key];
+                total--;
+            } else {
+                break;
+            }
+            if (!suc) break;
+        }
+    } while (total > maxCount && items.count > 0 && suc);
+    if (suc) [self _dbCheckpoint];
+    return suc;
+}
+
+- (BOOL)removeAllItems {
+    if (![self _dbClose]) return NO;
+    [self _reset];
+    if (![self _dbOpen]) return NO;
+    if (![self _dbInitialize]) return NO;
+    return YES;
+}
+
+- (void)removeAllItemsWithProgressBlock:(void(^)(int removedCount, int totalCount))progress
+                               endBlock:(void(^)(BOOL error))end {
+    
+    int total = [self _dbGetTotalItemCount];
+    if (total <= 0) {
+        if (end) end(total < 0);
+    } else {
+        int left = total;
+        int perCount = 32;
+        NSArray *items = nil;
+        BOOL suc = NO;
+        do {
+            items = [self _dbGetItemSizeInfoOrderByTimeAscWithLimit:perCount];
+            for (LJKVStorageItem *item in items) {
+                if (left > 0) {
+                    if (item.filename) {
+                        [self _fileDeleteWithName:item.filename];
+                    }
+                    suc = [self _dbDeleteItemWithKey:item.key];
+                    left--;
+                } else {
+                    break;
+                }
+                if (!suc) break;
+            }
+            if (progress) progress(total - left, total);
+        } while (left > 0 && items.count > 0 && suc);
+        if (suc) [self _dbCheckpoint];
+        if (end) end(!suc);
+    }
+}
+
+#pragma mark - public get
+- (LJKVStorageItem *)getItemForKey:(NSString *)key {
+    if (key.length == 0) return nil;
+    LJKVStorageItem *item = [self _dbGetItemWithKey:key excludeInlineData:NO];
+    if (item) {
+        [self _dbUpdateAccessTimeWithKey:key];
+        if (item.filename) {
+            item.value = [self _fileReadWithName:item.filename];
+            if (!item.value) {
+                [self _dbDeleteItemWithKey:key];
+                item = nil;
+            }
+        }
+    }
+    return item;
+}
+
+- (LJKVStorageItem *)getItemInfoForKey:(NSString *)key {
+    if (key.length == 0) return nil;
+    LJKVStorageItem *item = [self _dbGetItemWithKey:key excludeInlineData:YES];
+    return item;
+}
+
+- (NSData *)getItemValueForKey:(NSString *)key {
+    if (key.length == 0) return nil;
+    NSData *value = nil;
+    switch (_type) {
+        case LJKVStorageTypeFile: {
+            NSString *filename = [self _dbGetFilenameWithKey:key];
+            if (filename) {
+                value = [self _fileReadWithName:filename];
+                if (!value) {
+                    [self _dbDeleteItemWithKey:key];
+                    value = nil;
+                }
+            }
+        } break;
+        case LJKVStorageTypeSQLite: {
+            value = [self _dbGetValueWithKey:key];
+        } break;
+        case LJKVStorageTypeMixed: {
+            NSString *filename = [self _dbGetFilenameWithKey:key];
+            if (filename) {
+                value = [self _fileReadWithName:filename];
+                if (!value) {
+                    [self _dbDeleteItemWithKey:key];
+                    value = nil;
+                }
+            } else {
+                value = [self _dbGetValueWithKey:key];
+            }
+        } break;
+    }
+    if (value) {
+        [self _dbUpdateAccessTimeWithKey:key];
+    }
+    return value;
+}
+
+- (NSArray *)getItemForKeys:(NSArray *)keys {
+    if (keys.count == 0) return nil;
+    NSMutableArray *items = [self _dbGetItemWithKeys:keys excludeInlineData:NO];
+    if (_type != LJKVStorageTypeSQLite) {
+        for (NSInteger i = 0, max = items.count; i < max; i++) {
+            LJKVStorageItem *item = items[i];
+            if (item.filename) {
+                item.value = [self _fileReadWithName:item.filename];
+                if (!item.value) {
+                    if (item.key) [self _dbDeleteItemWithKey:item.key];
+                    [items removeObjectAtIndex:i];
+                    i--;
+                    max--;
+                }
+            }
+        }
+    }
+    if (items.count > 0) {
+        [self _dbUpdateAccessTimeWithKeys:keys];
+    }
+    return items.count ? items : nil;
+}
+
+- (NSArray *)getItemInfoForKeys:(NSArray *)keys {
+    if (keys.count == 0) return nil;
+    return [self _dbGetItemWithKeys:keys excludeInlineData:YES];
+}
+
+- (NSDictionary *)getItemValueForKeys:(NSArray *)keys {
+    NSMutableArray *items = (NSMutableArray *)[self getItemForKeys:keys];
+    NSMutableDictionary *kv = [NSMutableDictionary new];
+    for (LJKVStorageItem *item in items) {
+        if (item.key && item.value) {
+            [kv setObject:item.value forKey:item.key];
+        }
+    }
+    return kv.count ? kv : nil;
+}
+
+- (BOOL)itemExistsForKey:(NSString *)key {
+    if (key.length == 0) return NO;
+    return [self _dbGetItemCountWithKey:key] > 0;
+}
+
+- (int)getItemsCount {
+    return [self _dbGetTotalItemCount];
+}
+
+- (int)getItemsSize {
+    return [self _dbGetTotalItemSize];
+}
+
 
 #pragma mark - db
 
@@ -217,6 +533,12 @@ static NSString *const kTrashDirectoryName = @"trash";
 - (BOOL)_dbInitialize {
     NSString *sql = @"pragma journal_mode = wal; pragma synchronous = normal; create table if not exists manifest (key text, filename text, size integer, inline_data blob, modification_time integer, last_access_time integer, extended_data blob, primary key(key)); create index if not exists last_access_time_idx on manifest(last_access_time);";
     return [self _dbExecute:sql];
+}
+- (void)_dbCheckpoint {
+    if (![self _dbCheck]) return;
+    // Cause a checkpoint to occur, merge `sqlite-wal` file to `sqlite` file.
+    // 暂存一些原子操作记录的，在适当的点会回滚写回到db文件
+    sqlite3_wal_checkpoint(_db, NULL);
 }
 - (BOOL)_dbExecute:(NSString *)sql {
     if (sql.length == 0) return NO;
@@ -610,7 +932,84 @@ static NSString *const kTrashDirectoryName = @"trash";
     return sqlite3_column_int(stmt, 0);
 }
 
+- (BOOL)_dbUpdateAccessTimeWithKey:(NSString *)key {
+    NSString *sql = @"update manifest set last_access_time = ?1 where key = ?2;";
+    sqlite3_stmt *stmt = [self _dbPrepareStmt:sql];
+    if (!stmt) return NO;
+    sqlite3_bind_int(stmt, 1, (int)time(NULL));
+    sqlite3_bind_text(stmt, 2, key.UTF8String, -1, NULL);
+    int result = sqlite3_step(stmt);
+    if (result != SQLITE_DONE) {
+        if (_errorLogsEnabled) NSLog(@"%s line:%d sqlite update error (%d): %s", __FUNCTION__, __LINE__, result, sqlite3_errmsg(_db));
+        return NO;
+    }
+    return YES;
+}
 
+- (BOOL)_dbUpdateAccessTimeWithKeys:(NSArray *)keys {
+    if (![self _dbCheck]) return NO;
+    int t = (int)time(NULL);
+    NSString *sql = [NSString stringWithFormat:@"update manifest set last_access_time = %d where key in (%@);", t, [self _dbJoinedKeys:keys]];
+    
+    sqlite3_stmt *stmt = NULL;
+    int result = sqlite3_prepare_v2(_db, sql.UTF8String, -1, &stmt, NULL);
+    if (result != SQLITE_OK) {
+        if (_errorLogsEnabled)  NSLog(@"%s line:%d sqlite stmt prepare error (%d): %s", __FUNCTION__, __LINE__, result, sqlite3_errmsg(_db));
+        return NO;
+    }
+    
+    [self _dbBindJoinedKeys:keys stmt:stmt fromIndex:1];
+    result = sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+    if (result != SQLITE_DONE) {
+        if (_errorLogsEnabled) NSLog(@"%s line:%d sqlite update error (%d): %s", __FUNCTION__, __LINE__, result, sqlite3_errmsg(_db));
+        return NO;
+    }
+    return YES;
+}
 
+#pragma mark - file
+
+- (BOOL)_fileWriteWithName:(NSString *)filename data:(NSData *)data {
+    NSString *path = [_dbPath stringByAppendingPathComponent:filename];
+    return [data writeToFile:path atomically:NO];
+}
+
+- (NSData *)_fileReadWithName:(NSString *)filename {
+    NSString *path = [_dbPath stringByAppendingPathComponent:filename];
+    NSData *data = [NSData dataWithContentsOfFile:path];
+    return data;
+}
+
+- (BOOL)_fileDeleteWithName:(NSString *)filename {
+    NSString *path = [_dbPath stringByAppendingPathComponent:filename];
+    return [[NSFileManager defaultManager] removeItemAtPath:path error:NULL];
+}
+
+- (BOOL)_fileMoveAllToTrash {
+    CFUUIDRef uuidRef = CFUUIDCreate(NULL);
+    CFStringRef uuid = CFUUIDCreateString(NULL, uuidRef);
+    CFRelease(uuidRef);
+    NSString *tmpPath = [_trashPath stringByAppendingPathComponent:(__bridge NSString *)(uuid)];
+    BOOL suc = [[NSFileManager defaultManager] moveItemAtPath:_dataPath toPath:tmpPath error:nil];
+    if (suc) {
+        suc = [[NSFileManager defaultManager] createDirectoryAtPath:_dataPath withIntermediateDirectories:YES attributes:nil error:NULL];;
+    }
+    CFRelease(uuid);
+    return suc;
+}
+
+- (void)_fileEmptyTrashInBackground {
+    NSString *trashPath = _trashPath;
+    dispatch_queue_t queue = _trashQueue;
+    dispatch_async(queue, ^{
+        NSFileManager *manager = [NSFileManager new];
+        NSArray *directoryContents = [manager contentsOfDirectoryAtPath:trashPath error:NULL];
+        for (NSString *path in directoryContents) {
+            NSString *fullPath = [trashPath stringByAppendingPathComponent:path];
+            [manager removeItemAtPath:fullPath error:NULL];
+        }
+    });
+}
 
 @end

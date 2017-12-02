@@ -7,9 +7,25 @@
 //
 
 #import "LJDiskCache.h"
+#import "LJKVStorage.h"
+#import <objc/runtime.h>
+#import <time.h>
+#include <CommonCrypto/CommonCrypto.h>
+#import "AppDelegate.h"
 
-#define Lock()
-#define Unlock()
+#define Lock() dispatch_semaphore_wait(self->_lock, DISPATCH_TIME_FOREVER)
+#define Unlock() dispatch_semaphore_signal(self->_lock)
+
+static const int extended_data_key;
+
+static int64_t _LJDiskSpaceFree() {
+    NSError *error = nil;
+    NSDictionary *attrs = [[NSFileManager defaultManager] attributesOfFileSystemForPath:NSHomeDirectory() error:&error];
+    if (error) return -1;
+    int64_t space = [[attrs objectForKey:NSFileSystemFreeSize] longLongValue];
+    if (space < 0) space = -1;
+    return space;
+}
 
 /**
  NSMapTable is a dictionary-like collection
@@ -48,6 +64,7 @@ static void _LJDiskCacheSetGlobal (LJDiskCache *cache){
 }
 
 @implementation LJDiskCache {
+    LJKVStorage *_kv;
     dispatch_semaphore_t _lock;
     dispatch_queue_t _queue;
 }
@@ -63,9 +80,65 @@ static void _LJDiskCacheSetGlobal (LJDiskCache *cache){
 }
 
 - (void)_trimInBackground{
+    __weak typeof(self) _self = self;
     dispatch_async(_queue, ^{
-        
+        __strong typeof(_self) self = _self;
+        if (!self) return ;
+        Lock();
+        [self _trimToCount:self.countLimit];
+        [self _trimToCost:self.costLimit];
+        [self _trimToAge:self.ageLimit];
+        [self _trimToFreeDiskSpace:self.freeDiskSpaceLimit];
+        Unlock();
     });
+}
+
+- (void)_trimToFreeDiskSpace:(NSUInteger)targetFreeDiskSpace {
+    if (targetFreeDiskSpace == 0) return;
+    int64_t totalBytes = [_kv getItemsSize];
+    if (totalBytes <=0) return;
+    int64_t diskFreeBytes =_LJDiskSpaceFree();
+    if (diskFreeBytes <0) return;
+    int64_t needTrimBytes = targetFreeDiskSpace - diskFreeBytes;
+    if (needTrimBytes <=0) return;
+    int64_t costLimit = totalBytes - needTrimBytes;
+    if (costLimit < 0) costLimit = 0;
+    [self _trimToCost:(int)costLimit];
+}
+
+- (void)_trimToCount:(NSUInteger)countLimit{
+    if (countLimit >= INT_MAX) return;
+    [_kv removeItemsToFitCount:(int)countLimit];
+}
+
+- (void)_trimToCost:(NSUInteger)costLimit{
+    if (costLimit >= INT_MAX) return;
+    [_kv removeItemsToFitSize:(int)costLimit];
+}
+
+- (void)_trimToAge:(NSTimeInterval)ageLimit{
+    if (ageLimit<=0){
+        [_kv removeAllItems];
+        return;
+    }
+    long timestamp = time(NULL);
+    if (timestamp <= ageLimit)return;
+    long age = timestamp - ageLimit;
+    if (age >= INT_MAX) return;
+    [_kv removeItemsEarlierThanTime:(int)age];
+}
+
+- (NSString *)_filenameForKey:(NSString*)key{
+    NSString *filename = nil;
+    if (_customFileNameBlock) filename = _customFileNameBlock(key);
+    if (!filename) filename = [self md5String:key];
+    return filename;
+}
+
+- (void)_appWillBeTerminated{
+    Lock();
+    _kv = nil;
+    Unlock();
 }
 
 #pragma mark - public
@@ -75,7 +148,7 @@ static void _LJDiskCacheSetGlobal (LJDiskCache *cache){
     return [self initWithPath:@"" inlineThreshold:0];
 }
 - (void)dealloc{
-    
+    [[NSNotificationCenter defaultCenter] removeObserver:self name:UIApplicationWillTerminateNotification object:nil];
 }
 - (instancetype)initWithPath:(NSString *)path{
     return [self initWithPath:path inlineThreshold:20*1024]; //20kb
@@ -88,6 +161,19 @@ static void _LJDiskCacheSetGlobal (LJDiskCache *cache){
     LJDiskCache *globalCache = _LJDiskCacheGetGlobal(path);
     if (globalCache) return globalCache;
     
+    LJKVStorageType type;
+    if (threshold == 0) {
+        type = LJKVStorageTypeFile;
+    }else if (threshold == NSUIntegerMax){
+        type = LJKVStorageTypeSQLite;
+    }else{
+        type = LJKVStorageTypeMixed;
+    }
+    
+    LJKVStorage *kv = [[LJKVStorage alloc] initWithPath:path type:type];
+    if (!kv) return nil;
+    
+    _kv = kv;
     _lock = dispatch_semaphore_create(1);
     _queue = dispatch_queue_create("com.blue.cache.disk", DISPATCH_QUEUE_CONCURRENT);
     _path = path;
@@ -98,9 +184,277 @@ static void _LJDiskCacheSetGlobal (LJDiskCache *cache){
     _freeDiskSpaceLimit = 0;
     _autoTrimInterval = 60;
     
+    [self _trimRecursively];
     _LJDiskCacheSetGlobal(self);
     
+    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(_appWillBeTerminated) name:UIApplicationWillTerminateNotification object:nil];
     return self;
 }
+
+- (BOOL)containsObjectForKey:(NSString *)key {
+    if (!key) return NO;
+    Lock();
+    BOOL contains = [_kv itemExistsForKey:key];
+    Unlock();
+    return contains;
+}
+
+- (void)containsObjectForKey:(NSString *)key withBlock:(void(^)(NSString *key, BOOL contains))block {
+    if (!block) return;
+    __weak typeof(self) _self = self;
+    dispatch_async(_queue, ^{
+        __strong typeof(_self) self = _self;
+        BOOL contains = [self containsObjectForKey:key];
+        block(key, contains);
+    });
+}
+
+- (id<NSCoding>)objectForKey:(NSString *)key{
+    if (!key) return nil;
+    Lock();
+    LJKVStorageItem *item = [_kv getItemForKey:key];
+    Unlock();
+    if (!item.value) return nil;
+    
+    id object = nil;
+    if (_customUnarchiveBlock) {
+        object = _customUnarchiveBlock(item.value);
+    }else{
+        @try {
+            object = [NSKeyedUnarchiver unarchiveObjectWithData:item.value];
+        }
+        @catch (NSException *exception){
+            // nothing to do
+        }
+    }
+    if (object && item.extendedData) {
+        [LJDiskCache setExtendedData:item.extendedData toObject:object];
+    }
+    return object;
+}
+
+- (void)objectForKey:(NSString *)key withBlock:(void(^)(NSString *key, id<NSCoding> object))block{
+    if (!block) return;
+    __weak typeof(self) _self = self;
+    dispatch_async(_queue, ^{
+        __strong typeof(_self) self = _self;
+        id<NSCoding> object = [self objectForKey:key];
+        block(key, object);
+    });
+}
+
+- (void)setObject:(nullable id<NSCoding>)object forKey:(NSString *)key{
+    if (!key) return;
+    if (!object) {
+        [self removeObjectForKey:key];
+        return;
+    }
+    
+    NSData *extendedData = [LJDiskCache getExtendedDataFromObject:object];
+    NSData *value = nil;
+    if (_customArchiveBlock) {
+        value =_customArchiveBlock(object);
+    }else{
+        @try {
+            value = [NSKeyedArchiver archivedDataWithRootObject:object];
+        }
+        @catch (NSException *exception) {
+            // nothing to do
+        }
+    }
+    if (!value) return;
+    NSString *filename = nil;
+    if (_kv.type != LJKVStorageTypeSQLite) {
+        if (value.length > _inlineThreshold) {
+            filename = [self _filenameForKey:key];
+        }
+    }
+    
+    Lock();
+    [_kv saveItemWithKey:key value:value filename:filename extendedData:extendedData];
+    Unlock();
+}
+
+- (void)setObject:(nullable id<NSCoding>)object forKey:(NSString *)key withBlock:(void(^)(void))block{
+    __weak typeof(self) _self = self;
+    dispatch_async(_queue, ^{
+        __strong typeof(_self) self = _self;
+        [self setObject:object forKey:key];
+        if (block) block();
+    });
+}
+
+- (void)removeObjectForKey:(NSString *)key{
+    if (!key) return;
+    Lock();
+    [_kv removeItemForKey:key];
+    Unlock();
+}
+
+- (void)removeObjectForKey:(NSString *)key withBlock:(void(^)(NSString *key))block{
+    __weak typeof(self) _self = self;
+    dispatch_async(_queue, ^{
+        __strong typeof(_self) self = _self;
+        [self removeObjectForKey:key];
+        if (block) block (key);
+    });
+}
+
+- (void)removeAllObjects{
+    Lock();
+    [_kv removeAllItems];
+    Unlock();
+}
+
+- (void)removeAllObjectsWithBlock:(void(^)(void))block{
+    __weak typeof(self) _self = self;
+    dispatch_async(_queue, ^{
+        __strong typeof(_self) self = _self;
+        [self removeAllObjects];
+        if (block) block();
+    });
+}
+
+- (void)removeAllObjectsWithProgressBlock:(nullable void(^)(int removedCount, int totalCount))progress
+                                 endBlock:(nullable void(^)(BOOL error))end{
+    __weak typeof(self) _self = self;
+    dispatch_async(_queue, ^{
+        __strong typeof(_self) self = _self;
+        if (!self) {
+            if (end) end(YES);
+            return ;
+        }
+        Lock();
+        [_kv removeAllItemsWithProgressBlock:progress endBlock:end];
+        Unlock();
+    });
+}
+
+- (NSInteger)totalCount{
+    Lock();
+    int count = [_kv getItemsCount];
+    Unlock();
+    return count;
+}
+
+- (void)totalCountWithBlock:(void(^)(NSInteger totalCount))block{
+    if (!block) return;
+    __weak typeof(self) _self = self;
+    dispatch_async(_queue, ^{
+        __strong typeof(_self) self = _self;
+        NSInteger count = [self totalCount];
+        block(count);
+    });
+}
+
+- (NSInteger)totalCost{
+    Lock();
+    int cost = [_kv getItemsSize];
+    Unlock();
+    return cost;
+}
+
+- (void)totalCostWithBlock:(void(^)(NSInteger totalCost))block{
+    if (!block) return;
+    __weak typeof(self) _self = self;
+    dispatch_async(_queue, ^{
+        __strong typeof(_self) self = _self;
+        NSInteger totalCost = [self totalCost];
+        block(totalCost);
+    });
+}
+
+- (void)trimToCount:(NSUInteger)count{
+    Lock();
+    [self _trimToCount:count];
+    Unlock();
+}
+
+- (void)trimToCount:(NSUInteger)count withBlock:(void(^)(void))block{
+    __weak typeof(self) _self = self;
+    dispatch_async(_queue, ^{
+        __strong typeof(_self) self = _self;
+        [self trimToCount:count];
+        if (block) block();
+    });
+}
+
+- (void)trimToCost:(NSUInteger)cost{
+    Lock();
+    [self _trimToCost:cost];
+    Unlock();
+}
+
+- (void)trimToCost:(NSUInteger)cost withBlock:(void(^)(void))block{
+    __weak typeof(self) _self = self;
+    dispatch_async(_queue, ^{
+        __strong typeof(_self) self = _self;
+        [self trimToCost:cost];
+        if (block) block();
+    });
+}
+
+- (void)trimToAge:(NSTimeInterval)age{
+    Lock();
+    [self _trimToAge:age];
+    Unlock();
+}
+
+- (void)trimToAge:(NSTimeInterval)age withBlock:(void(^)(void))block{
+    __weak typeof(self) _self = self;
+    dispatch_async(_queue, ^{
+        __strong typeof(_self) self = _self;
+        [self trimToAge:age];
+        if (block) block();
+    });
+}
+
++ (void)setExtendedData:(NSData *)extendedData toObject:(id)object{
+    if (!object) return;
+    objc_setAssociatedObject(object, &extended_data_key, extendedData, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+}
+
++ (NSData *)getExtendedDataFromObject:(id)object{
+    if (!object) return nil;
+    return (NSData*)objc_getAssociatedObject(object, &extended_data_key);
+}
+
+- (NSString *)description {
+    if (_name) return [NSString stringWithFormat:@"<%@: %p> (%@:%@)", self.class, self, _name, _path];
+    else return [NSString stringWithFormat:@"<%@: %p> (%@)", self.class, self, _path];
+}
+
+- (BOOL)errorLogsEnabled {
+    Lock();
+    BOOL enabled = _kv.errorLogsEnabled;
+    Unlock();
+    return enabled;
+}
+
+- (void)setErrorLogsEnabled:(BOOL)errorLogsEnabled {
+    Lock();
+    _kv.errorLogsEnabled = errorLogsEnabled;
+    Unlock();
+}
+
+#pragma mark md5
+
+- (NSString *)md5String:(NSString *)string{
+    NSData *data = [string  dataUsingEncoding:NSUTF8StringEncoding];
+    return [self _md5String:data];
+}
+
+- (NSString *)_md5String:(NSData *)data{
+    unsigned char result[CC_MD5_DIGEST_LENGTH];
+    CC_MD5(data.bytes, (CC_LONG)data.length, result);
+    return [NSString stringWithFormat:
+            @"%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x",
+            result[0], result[1], result[2], result[3],
+            result[4], result[5], result[6], result[7],
+            result[8], result[9], result[10], result[11],
+            result[12], result[13], result[14], result[15]
+            ];
+}
+
 @end
 

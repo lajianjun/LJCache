@@ -18,6 +18,7 @@
 		3259175C1FAAF5E300696C85 /* LJMemoryCache.m in Sources */ = {isa = PBXBuildFile; fileRef = 3259175B1FAAF5E300696C85 /* LJMemoryCache.m */; };
 		3259175F1FAC56F400696C85 /* LJDiskCache.m in Sources */ = {isa = PBXBuildFile; fileRef = 3259175E1FAC56F400696C85 /* LJDiskCache.m */; };
 		325917621FAC71CE00696C85 /* LJKVStorage.m in Sources */ = {isa = PBXBuildFile; fileRef = 325917611FAC71CE00696C85 /* LJKVStorage.m */; };
+		3289680E1FD16610000707B8 /* LJCache.m in Sources */ = {isa = PBXBuildFile; fileRef = 3289680D1FD16610000707B8 /* LJCache.m */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -60,6 +61,8 @@
 		3259175E1FAC56F400696C85 /* LJDiskCache.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = LJDiskCache.m; sourceTree = "<group>"; };
 		325917601FAC71CE00696C85 /* LJKVStorage.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = LJKVStorage.h; sourceTree = "<group>"; };
 		325917611FAC71CE00696C85 /* LJKVStorage.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = LJKVStorage.m; sourceTree = "<group>"; };
+		3289680C1FD16610000707B8 /* LJCache.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = LJCache.h; sourceTree = "<group>"; };
+		3289680D1FD16610000707B8 /* LJCache.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = LJCache.m; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -151,6 +154,8 @@
 				3259175E1FAC56F400696C85 /* LJDiskCache.m */,
 				325917601FAC71CE00696C85 /* LJKVStorage.h */,
 				325917611FAC71CE00696C85 /* LJKVStorage.m */,
+				3289680C1FD16610000707B8 /* LJCache.h */,
+				3289680D1FD16610000707B8 /* LJCache.m */,
 			);
 			path = Cache;
 			sourceTree = "<group>";
@@ -293,6 +298,7 @@
 				3259175C1FAAF5E300696C85 /* LJMemoryCache.m in Sources */,
 				325917371FAAF54000696C85 /* main.m in Sources */,
 				325917621FAC71CE00696C85 /* LJKVStorage.m in Sources */,
+				3289680E1FD16610000707B8 /* LJCache.m in Sources */,
 				325917291FAAF54000696C85 /* AppDelegate.m in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
