@@ -13,7 +13,7 @@
 @implementation LJCache
 
 - (instancetype)init{
-    @throw [NSException exceptionWithName:@"LJCache init error" reason:@"Please use the designated initializer and pass the 'name'. Use \"initWithName\" or \"initWithPath\" to create YYCache instance." userInfo:nil];
+    @throw [NSException exceptionWithName:@"LJCache init error" reason:@"Please use the designated initializer and pass the 'name'. Use \"initWithName\" or \"initWithPath\" to create LJCache instance." userInfo:nil];
     return [self initWithName:@""];
 }
 

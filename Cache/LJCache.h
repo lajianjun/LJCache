@@ -12,11 +12,11 @@
 NS_ASSUME_NONNULL_BEGIN
 
 /**
- `YYCache` is a thread safe key-value cache.
+ `LJCache` is a thread safe key-value cache.
  
- It use `YYMemoryCache` to store objects in a small and fast memory cache,
- and use `YYDiskCache` to persisting objects to a large and slow disk cache.
- See `YYMemoryCache` and `YYDiskCache` for more information.
+ It use `LJMemoryCache` to store objects in a small and fast memory cache,
+ and use `LJDiskCache` to persisting objects to a large and slow disk cache.
+ See `LJMemoryCache` and `LJDiskCache` for more information.
  */
 @interface LJCache : NSObject
 

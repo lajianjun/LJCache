@@ -128,8 +128,8 @@ static NSString *const kTrashDirectoryName = @"trash";
  *         filename     != null
  *                          则用文件缓存value，并把`key`,`filename`,`extendedData`写入数据库
  *         filename     == null
- *                          缓存方式type：YYKVStorageTypeFile 不进行缓存
- *                          缓存方式type：YYKVStorageTypeSQLite || YYKVStorageTypeMixed 数据库缓存
+ *                          缓存方式type：LJKVStorageTypeFile 不进行缓存
+ *                          缓存方式type：LJKVStorageTypeSQLite || LJKVStorageTypeMixed 数据库缓存
  */
 - (BOOL)saveItemWithKey:(NSString *)key value:(NSData *)value filename:(NSString *)filename extendedData:(NSData *)extendedData {
     if (key.length == 0 || value.length == 0) return NO;
